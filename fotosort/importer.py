@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from .config import EVENT_SUBFOLDERS_ON_IMPORT, VIDEO_SUBFOLDER
+from .config import EVENT_SUBFOLDERS_ON_IMPORT, PHOTO_SUBFOLDER, VIDEO_SUBFOLDER
 from .media import Shot
 from .naming import dest_filename, event_path
 
@@ -135,7 +135,7 @@ def run_import(events: list[Event], root: Path, progress: ProgressFn | None = No
         report.folders.append(folder)
 
         for shot in event.shots:
-            target_dir = folder / VIDEO_SUBFOLDER if shot.is_video else folder
+            target_dir = folder / (VIDEO_SUBFOLDER if shot.is_video else PHOTO_SUBFOLDER)
             target_dir.mkdir(exist_ok=True)
             for src in shot.files:
                 dst = target_dir / dest_filename(src, shot.taken)

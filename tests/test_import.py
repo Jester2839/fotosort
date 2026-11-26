@@ -60,14 +60,15 @@ def test_full_import_and_reimport(card, tmp_path, capsys):
                  "--name", "Norsko", "--name", "zatmeni slunce"]) == 0
 
     trip = root / "2026" / "260703-06_Norsko"
-    assert sorted(p.name for p in trip.iterdir() if p.is_file()) == [
+    assert not [p for p in trip.iterdir() if p.is_file()]  # fotky jdou do _vyber, ne do kořene akce
+    assert sorted(p.name for p in (trip / "_vyber").iterdir()) == [
         "260703_090000_DSC00001.ARW", "260703_090000_DSC00001.JPG",
         "260703_235900_DSC00002.ARW", "260704_003000_DSC00003.JPG",
         "260706_180000_DSC00004.ARW", "260706_180000_DSC00004.JPG",
     ]
     assert (trip / "_upraveno").is_dir()
     assert (trip / "video" / "260704_120000_C0001.MP4").exists()
-    assert (root / "2026" / "260716_zatmeni slunce" / "260716_100000_DSC00005.JPG").exists()
+    assert (root / "2026" / "260716_zatmeni slunce" / "_vyber" / "260716_100000_DSC00005.JPG").exists()
     assert not list(root.rglob("*.part"))
 
     # Druhé vložení stejné karty: nic nového.
@@ -78,7 +79,7 @@ def test_full_import_and_reimport(card, tmp_path, capsys):
     # Na kartu přibude nová fotka: importuje se jen ona.
     add_photo(card, 6, datetime(2026, 8, 1, 8, 0))
     assert main(["import", "--card", str(card), "--root", str(root), "-y", "--name", "tabor"]) == 0
-    assert (root / "2026" / "260801_tabor" / "260801_080000_DSC00006.ARW").exists()
+    assert (root / "2026" / "260801_tabor" / "_vyber" / "260801_080000_DSC00006.ARW").exists()
 
 
 def test_dry_run_writes_nothing(card, tmp_path):

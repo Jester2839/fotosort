@@ -65,15 +65,18 @@ def test_apply_tags_keepers_moves_rejects_and_undo(tmp_path):
     vs[0].bucket, vs[0].category = "good", "lidi"
     vs[1].bucket = "unsure"
     vs[2].reject("neostre", "test")
-    before = sorted(p.name for p in folder.iterdir())
     before_b = (folder / "B.JPG").read_bytes()
 
+    side = folder / "A.xmp"
+    side.write_text('<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core"/>')  # cizí sidecar
+    before = sorted(p.name for p in folder.iterdir())
     rep = cull.apply(folder, vs)
-    assert (rep.moved, rep.tagged) == (1, 2)
-    assert (folder / "A.xmp").exists() and xmp.is_ours(folder / "B.JPG")
+    assert (rep.moved, rep.tagged, rep.foreign_xmp) == (5, 1, ["A"])  # A.ARW+JPG+xmp, B, C
+    assert (folder / "_vyber" / "A.xmp").exists()  # cizí sidecar putuje s fotkou, nepřepsán
+    assert xmp.is_ours(folder / "_vyber" / "B.JPG")
     assert (folder / "_ke_smazani" / "neostre" / "C.JPG").exists()
     assert cull.is_culled(folder)
 
-    assert cull.undo(folder) == 3
+    assert cull.undo(folder) == 6  # 5 přesunů + 1 naše XMP
     assert sorted(p.name for p in folder.iterdir()) == before
     assert (folder / "B.JPG").read_bytes() == before_b

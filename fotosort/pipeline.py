@@ -84,7 +84,8 @@ def prepare_scorer(rep: Reporter):
 
 def plan_cull(folder: Path, rep: Reporter, use_ai: bool = True, categories: bool = True,
               strictness: int = C.DEFAULT_STRICTNESS) -> CullPlan:
-    """Analyzuje fotky přímo ve složce akce a rozhodne o každé. Nic nepřesouvá."""
+    """Analyzuje fotky akce (v _vyber i v kořeni) a rozhodne o každé. Nic nepřesouvá."""
+    folder = cull.event_folder(folder)
     shots = cull.find_shots(folder)
     if not shots:
         return CullPlan(folder, [])

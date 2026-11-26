@@ -78,13 +78,27 @@ def test_apply_moves_pairs_and_undo_restores(event):
     assert (trash / "neostre" / "DSC00100.JPG").exists()
     assert (trash / "neostre" / "DSC00100.ARW").exists()
     assert (trash / "serie" / "DSC00200.JPG").exists()
-    assert (event / "DSC00202.JPG").exists()
-    assert (event / "DSC00000.ARW").exists()
+    assert (event / "_vyber" / "DSC00202.JPG").exists()  # bez AI jde zbytek do _vyber
+    assert (event / "_vyber" / "DSC00000.ARW").exists()
+    assert (event / "_upraveno" / "upravena.JPG").exists()
 
     assert main(["cull", str(event), "--undo"]) == 0
     after = sorted(p.name for p in event.iterdir() if p.is_file())
     assert after == before
-    assert not trash.exists()
+    assert not trash.exists() and not (event / "_vyber").exists()
+
+
+def test_import_layout_in_vyber_is_sorted_in_place(event):
+    vyber = event / "_vyber"
+    vyber.mkdir()
+    for f in list(event.iterdir()):
+        if f.is_file():
+            f.rename(vyber / f.name)
+    assert main(["cull", str(vyber), "-y", "--bez-ai"]) == 0  # i když vyberu přímo _vyber
+    assert (event / "_ke_smazani" / "neostre" / "DSC00100.ARW").exists()
+    assert (vyber / "DSC00202.JPG").exists()
+    assert main(["cull", str(event), "--undo"]) == 0
+    assert (vyber / "DSC00100.ARW").exists() and not (event / "_ke_smazani").exists()
 
 
 def test_dry_run_moves_nothing(event):

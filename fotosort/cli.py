@@ -183,18 +183,16 @@ def run_cull(folder: Path, dry_run: bool, ask: bool, use_ai: bool = True, catego
         group = [v for v in verdicts if v.reason == reason]
         if group:
             _print_group(label, f"{trash}/{reason}/", group)
+    keep = C.PHOTO_SUBFOLDER
     if plan.used_ai:
         for bucket, label in (("good", "výběr"), ("unsure", "nejisté")):
             group = [v for v in verdicts if v.bucket == bucket and not v.dest]
             if group:
                 stars = "★" * C.XMP_RATING[bucket]
-                _print_group(label, f"zůstává, XMP {stars} {C.KEYWORD_ROOT}|{C.BUCKET_KEYWORD[bucket]}", group)
+                _print_group(label, f"{keep}/, XMP {stars} {C.KEYWORD_ROOT}|{C.BUCKET_KEYWORD[bucket]}", group)
     else:
-        print(f"  {'zůstává na místě':<30} {sum(1 for v in verdicts if not v.dest):>4}")
+        print(f"  {'ostatní (bez AI)':<30} {sum(1 for v in verdicts if not v.dest):>4}  → {keep}/")
 
-    if not any(v.dest or v.bucket for v in verdicts):
-        print("Nic k přesunu.")
-        return 0
     if dry_run:
         print("\n(dry run – nic se nepřesunulo ani nezapsalo)")
         return 0
@@ -202,7 +200,8 @@ def run_cull(folder: Path, dry_run: bool, ask: bool, use_ai: bool = True, catego
         print("Zrušeno.")
         return 0
     rep = pipeline.apply_plan(plan)
-    print(f"✓ Přesunuto {rep.moved} souborů do {trash}, XMP zapsáno u {rep.tagged} snímků.")
+    print(f"✓ Přesunuto {rep.moved} souborů (vyřazené do {trash}, ostatní do {C.PHOTO_SUBFOLDER}), "
+          f"XMP zapsáno u {rep.tagged} snímků.")
     if rep.foreign_xmp:
         print(f"  ! {len(rep.foreign_xmp)} snímků už mělo vlastní XMP, nechal jsem je být "
               f"(např. {rep.foreign_xmp[0]}).")
@@ -241,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_import)
 
     c = sub.add_parser("cull", help="roztřídit akci: vyřazené do _ke_smazani, zbytek ohodnotit v XMP")
-    c.add_argument("folder", help="složka akce, např. ...\\_Foto\\2026\\260703-18_Norsko")
+    c.add_argument("folder", help="složka akce (nebo její _vyber), např. ...\\_Foto\\2026\\260703-18_Norsko")
     c.add_argument("--dry-run", action="store_true", help="jen ukázat, co by se přesunulo")
     c.add_argument("--undo", action="store_true", help="vrátit poslední třídění zpět")
     c.add_argument("--bez-ai", action="store_true", help="jen technická kontrola (bez očí a AI skóre)")

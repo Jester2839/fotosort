@@ -1,7 +1,7 @@
 """Třídění složky akce.
 
 Vyřazené (neostré, série, zavřené oči, přepálené JPG, slabé AI skóre) se přesunou do
-_ke_smazani/<důvod>/. Výběr a nejisté zůstanou na místě a dostanou XMP pro Lightroom.
+_ke_smazani/<důvod>/. Všechno ostatní skončí v _vyber/ a výběr s nejistými dostanou XMP pro Lightroom.
 Nic se nemaže. Každý přesun i zápis XMP jde do logu, takže jde celé vrátit (undo).
 """
 
@@ -50,9 +50,17 @@ class Verdict:
         self.dest = f"{C.CULL_FOLDERS['delete']}/{reason}"
 
 
+def event_folder(folder: Path) -> Path:
+    """Složka akce, i když uživatel vybral přímo její _vyber."""
+    return folder.parent if folder.name.lower() == C.PHOTO_SUBFOLDER.lower() else folder
+
+
 def find_shots(folder: Path) -> list[Shot]:
-    """Jen fotky přímo ve složce akce, ne v podsložkách (_upraveno, _ke_smazani…)."""
-    return sorted(collect_photos(folder, recursive=False), key=lambda s: s.taken)
+    """Fotky v _vyber a přímo ve složce akce (starší akce), ne v _upraveno, _ke_smazani…"""
+    shots = collect_photos(folder, recursive=False)
+    if (folder / C.PHOTO_SUBFOLDER).is_dir():
+        shots += collect_photos(folder / C.PHOTO_SUBFOLDER, recursive=False)
+    return sorted(shots, key=lambda s: s.taken)
 
 
 def _quiet_worker() -> None:
@@ -200,7 +208,10 @@ class ApplyReport:
 
 
 def apply(folder: Path, verdicts: list[Verdict]) -> ApplyReport:
-    """Přesune vyřazené (RAW+JPG spolu), zapíše XMP výběru/nejistým a vše zaloguje pro undo."""
+    """Vyřazené do _ke_smazani/<důvod>, ostatní do _vyber (RAW+JPG spolu), XMP výběru/nejistým.
+
+    Každý krok jde do logu (cesty relativně ke složce akce), undo ho přehraje pozpátku.
+    """
     log_path = folder / C.CULL_FOLDERS["delete"] / C.CULL_LOG
     log_path.parent.mkdir(exist_ok=True)
     new_log = not log_path.exists()
@@ -210,25 +221,28 @@ def apply(folder: Path, verdicts: list[Verdict]) -> ApplyReport:
         if new_log:
             writer.writerow(["z", "do", "duvod", "poznamka"])
         for v in verdicts:
+            target = folder / (v.dest or C.PHOTO_SUBFOLDER)
+            target.mkdir(parents=True, exist_ok=True)
+            files = []
+            sidecars = [x for x in {f.with_suffix(".xmp") for f in v.shot.files} if x.exists()]
+            for f in [*v.shot.files, *sidecars]:  # existující .xmp (např. z LR) jde s fotkou
+                dst = target / f.name
+                if f.parent == target or dst.exists():
+                    files.append(f)
+                    continue
+                os.replace(f, dst)
+                writer.writerow([f.relative_to(folder).as_posix(), dst.relative_to(folder).as_posix(),
+                                 v.reason or "vyber", v.note])
+                files.append(dst)
+                report.moved += 1
+            v.shot.files = files = [f for f in files if f.suffix.lower() != ".xmp"]
             if v.bucket and not v.dest:
-                written = xmp.write(v.shot.files, C.XMP_RATING[v.bucket], keywords_for(v))
+                written = xmp.write(files, C.XMP_RATING[v.bucket], keywords_for(v))
                 if written is None:
                     report.foreign_xmp.append(v.shot.stem)
                     continue
-                writer.writerow([written.name, "xmp", v.bucket, v.note])
+                writer.writerow([written.relative_to(folder).as_posix(), "xmp", v.bucket, v.note])
                 report.tagged += 1
-                continue
-            if not v.dest:
-                continue
-            target = folder / v.dest
-            target.mkdir(parents=True, exist_ok=True)
-            for f in v.shot.files:
-                dst = target / f.name
-                if dst.exists():
-                    continue
-                os.replace(f, dst)
-                writer.writerow([f.name, dst.relative_to(folder).as_posix(), v.reason or v.dest, v.note])
-                report.moved += 1
     return report
 
 
@@ -241,14 +255,15 @@ def undo(folder: Path) -> int:
         return 0
     restored = 0
     with log_path.open(encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            if row["do"] == "xmp":
-                restored += xmp.remove(folder / row["z"])
-                continue
-            src, dst = folder / row["do"], folder / row["z"]
-            if src.exists() and not dst.exists():
-                os.replace(src, dst)
-                restored += 1
+        rows = list(csv.DictReader(fh))
+    for row in reversed(rows):  # pozpátku: XMP se odstraní dřív, než se soubor vrátí
+        if row["do"] == "xmp":
+            restored += xmp.remove(folder / row["z"])
+            continue
+        src, dst = folder / row["do"], folder / row["z"]
+        if src.exists() and not dst.exists():
+            os.replace(src, dst)
+            restored += 1
     log_path.unlink()
     for top in (*C.CULL_FOLDERS.values(), *C.LEGACY_CULL_FOLDERS):
         base = folder / top

@@ -58,16 +58,20 @@ class Api:
         return [{"path": str(c), "label": _volume_label(c)} for c in cards.find_cards()]
 
     def _recent(self, limit: int = 6) -> list[dict]:
-        out = []
+        """Naposledy změněné akce (podle složky akce a jejích přímých podsložek, ne podle názvu)."""
         if not self._root.is_dir():
-            return out
-        years = sorted((p for p in self._root.iterdir() if p.is_dir() and p.name.isdigit()), reverse=True)
-        for year in years:
-            for ev in sorted((p for p in year.iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True):
-                out.append({"name": ev.name, "path": str(ev), "culled": cull.is_culled(ev)})
-                if len(out) >= limit:
-                    return out
-        return out
+            return []
+        found = []
+        for year in (p for p in self._root.iterdir() if p.is_dir() and p.name.isdigit()):
+            for ev in (p for p in year.iterdir() if p.is_dir()):
+                try:
+                    mtime = max([ev.stat().st_mtime] + [c.stat().st_mtime for c in ev.iterdir() if c.is_dir()])
+                except OSError:
+                    continue
+                found.append((mtime, ev))
+        found.sort(key=lambda t: t[0], reverse=True)
+        return [{"name": ev.name, "path": str(ev), "culled": cull.is_culled(ev), "modified": mtime * 1000}
+                for mtime, ev in found[:limit]]
 
     def choose_root(self) -> dict:
         picked = self._pick_folder(self._root)
@@ -147,7 +151,7 @@ class Api:
     # --- třídění ----------------------------------------------------------------------------
 
     def start_cull(self, folder: str, opts: dict) -> dict:
-        path = Path(folder)
+        path = cull.event_folder(Path(folder))
         if not path.is_dir():
             return {"error": f"Složka neexistuje: {folder}"}
         if cull.is_culled(path):
@@ -162,6 +166,7 @@ class Api:
                                   strictness=int(opts.get("strictness", C.DEFAULT_STRICTNESS)))
         summary = plan.summary()
         summary["sorted"] = True
+        summary["keep"] = str(folder / C.PHOTO_SUBFOLDER)
         if not plan.verdicts:
             self._emit(type="log", level="warn", msg=f"{folder.name}: ve složce nejsou žádné fotky.")
             return summary

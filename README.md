@@ -17,8 +17,9 @@ python -m fotosort
 ```
 
 Start → Import z karty (rozdělení na akce, názvy, kontrola místa) → průběh → hotovo.
-Druhá cesta: „Roztřídit existující složku“. Na konci jsou tlačítka Otevřít složku,
-Prohlédnout `_ke_smazani`, Přesunout `_ke_smazani` do Koše (s potvrzením) a Vrátit třídění.
+Druhá cesta: „Roztřídit existující složku“ (fotky z kořene akce přesune do `_vyber`; když už je akce v Lightroomu, nejdřív ji z katalogu odeber).
+Na startu je seznam naposledy změněných akcí. Na konci jsou tlačítka Otevřít složku,
+Otevřít `_vyber`, Prohlédnout `_ke_smazani`, Přesunout `_ke_smazani` do Koše (s potvrzením) a Vrátit třídění.
 Cesta k Lightroomu pro tlačítko „Otevřít Lightroom“ je v `config.py` (`LIGHTROOM_EXE`).
 
 Potřebuje Python 3.11–3.14 a Microsoft Edge WebView2 (ve Windows 11 je vestavěný).
@@ -36,7 +37,7 @@ Co se stane:
 1. Najde disk se složkou `DCIM`, načte fotky (`.ARW`, `.JPG`) a videa (`PRIVATE\M4ROOT\CLIP`).
 2. Přeskočí vše, co už v knihovně je (porovnává jen názvy souborů, z OneDrive nic nestahuje).
 3. Ukáže časovou osu po dnech. Nová akce se navrhne po ≥ 2 dnech bez focení. Číslem dne řez přidáš nebo zrušíš.
-4. Zeptá se na název každé akce a vytvoří `_Foto\2026\260703-18_Norsko\` + `_upraveno\` (+ `video\`).
+4. Zeptá se na název každé akce a vytvoří `_Foto\2026\260703-18_Norsko\` s fotkami v `_vyber\` + `_upraveno\` (+ `video\`).
 5. Kopíruje s ověřením kontrolního součtu. Karta zůstane beze změny.
 
 Soubory se přejmenují na `260703_143502_DSC01234.ARW` (čas pořízení + původní název), takže RAW+JPG drží spolu, řadí se chronologicky a nevadí přetočení počítadla Sony.
@@ -53,7 +54,7 @@ python -m fotosort cull "C:\...\_Foto\2026\260703-18_Norsko" --kategorie
 python -m fotosort cull "C:\...\_Foto\2026\260703-18_Norsko" --undo
 ```
 
-Prochází jen fotky přímo ve složce akce (ne `_upraveno` apod.).
+Prochází fotky v `_vyber\` a přímo ve složce akce (starší akce), ne `_upraveno` apod. Jde zadat i rovnou `_vyber`.
 
 **1. Technická kontrola** → `_ke_smazani\<důvod>\`
 - `serie` – snímky rychle za sebou nebo skoro stejné; ponechá nejostřejší bez zavřených očí,
@@ -63,7 +64,7 @@ Prochází jen fotky přímo ve složce akce (ne `_upraveno` apod.).
 - `chyba` – soubor nejde načíst.
 
 **2. AI hodnocení** zbytku (CLIP + LAION aesthetic), relativně v rámci focení.
-Výběr a nejisté **zůstávají ve složce akce** a dostanou XMP, které Lightroom Classic načte při importu:
+Všechno nevyřazené skončí v **`_vyber\`**; výběr a nejisté tam dostanou XMP, které Lightroom Classic načte při importu:
 - horních 40 % → ★★★, klíčové slovo `Fotosort|Výběr`,
 - spodních 20 % → `_ke_smazani\slabe\` (jen když je fotek aspoň 10),
 - zbytek → ★, klíčové slovo `Fotosort|Nejisté`,
@@ -79,7 +80,7 @@ Prahy, procenta a kategorie jsou v `config.py`.
 
 ### Lightroom Classic
 
-1. Import › **Přidat** složku akce, **bez** „Zahrnout podsložky“ – tím vynecháš `_ke_smazani` i `_upraveno`.
+1. Import › **Přidat** složku `_vyber` dané akce.
 2. Filtruj podle hvězdiček (★★★ výběr, ★ nejisté) nebo klíčových slov `Fotosort › …`.
 3. `_ke_smazani` po prohlédnutí smaž celou (v aplikaci jde do Koše).
 

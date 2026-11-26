@@ -10,6 +10,13 @@ function size(b) {
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return `${i < 2 ? Math.round(b) : b.toFixed(1).replace(".", ",")} ${u[i]}`;
 }
+const rtf = new Intl.RelativeTimeFormat("cs", { numeric: "auto" });
+function ago(ms) {
+  const d = (ms - Date.now()) / 1000, a = Math.abs(d);
+  const [v, u] = a < 3600 ? [d / 60, "minute"] : a < 86400 ? [d / 3600, "hour"] : a < 86400 * 45 ? [d / 86400, "day"]
+    : a < 86400 * 365 ? [d / 2592000, "month"] : [d / 31536000, "year"];
+  return rtf.format(Math.round(v), u);
+}
 const STRICT = {
   1: ["Mírná", "AI nic nevyhazuje – do _ke_smazani jdou jen technicky špatné fotky."],
   2: ["Vyvážená", "Nejslabších 20 % podle AI jde také do _ke_smazani."],
@@ -95,13 +102,14 @@ function renderStart() {
         <span>Rozdělí fotky na akce podle dnů, vytvoří složky, zkopíruje s ověřením a rovnou roztřídí.</span></button>
       <button class="mode" data-act="pick-cull">
         <span class="ico" style="background:#2a2620">${ICON.folder}</span><b>Roztřídit existující složku</b>
-        <span>Vybereš složku akce. Vyřazené se přesunou do _ke_smazani, zbytek dostane hvězdičky v XMP.</span></button>
+        <span>Vybereš složku akce. Vyřazené se přesunou do _ke_smazani, zbytek do _vyber s hvězdičkami v XMP.</span></button>
     </div>
     <section style="display:flex;flex-direction:column;gap:12px">
-      <div class="row" style="justify-content:space-between"><h2>Poslední akce</h2>
+      <div class="row" style="justify-content:space-between"><h2>Naposledy změněné akce</h2>
         <span class="small">Knihovna: <span class="mono">${esc(root)}</span> · <button class="btn ghost" style="padding:4px 8px" data-act="root">Změnit…</button></span></div>
       ${recent.length ? `<div class="list">${recent.map((r) => `<div class="item">
           <span class="n">${esc(r.name)}</span>
+          <span class="small" title="Naposledy změněno">${esc(ago(r.modified))}</span>
           ${r.culled ? '<span class="pill good">Roztříděno</span>' : '<span class="pill neutral">Neroztříděno</span>'}
           <button class="btn" data-act="open" data-path="${esc(r.path)}">Otevřít</button>
           ${r.culled ? "" : `<button class="btn" data-act="cull" data-path="${esc(r.path)}">Roztřídit</button>`}
@@ -157,7 +165,7 @@ function renderImport() {
         <div id="events" style="display:flex;flex-direction:column;gap:10px"></div>
       </section>
       <section class="panel"><h2>Třídění</h2>
-        <label class="check"><input type="checkbox" data-opt="sort" ${o.sort ? "checked" : ""}><span>Po importu rovnou roztřídit<br><span class="d">Vyřazené do _ke_smazani, výběr ★★★ a nejisté ★ do XMP</span></span></label>
+        <label class="check"><input type="checkbox" data-opt="sort" ${o.sort ? "checked" : ""}><span>Po importu rovnou roztřídit<br><span class="d">Vyřazené do _ke_smazani, v _vyber zůstane výběr ★★★ a nejisté ★ (XMP)</span></span></label>
         ${optsHtml()}
       </section>
     </div>
@@ -201,13 +209,13 @@ function renderImportSide() {
   const sorted = S.opts.sort;
   const short = (path) => path.split(/[\\/]/).slice(-2).join("\\");
   const tree = p ? p.events.map((e) => `${esc(short(e.path))}\\
-  ├─ fotky (★★★ výběr, ★ nejisté)  → do Lightroomu
+  ├─ _vyber\\  ★★★ / ★  → do Lightroomu
   ├─ _upraveno\\${e.videos ? "\n  ├─ video\\" : ""}
   └─ <span style="color:var(--bad)">_ke_smazani\\</span>${sorted ? "" : "  (až po třídění)"}`).join("\n\n") : "…";
   side.innerHTML = `
     <section class="panel"><h2>Kam to půjde</h2>
       <span class="small mono" style="overflow-wrap:anywhere">${esc(S.init.root)}\\</span><div class="tree mono">${tree}</div>
-      <p class="small">Výběr a nejisté zůstanou přímo ve složce akce, rozliší je hvězdičky a klíčová slova v XMP.</p></section>
+      <p class="small">Fotky se kopírují do _vyber. Třídění z ní přesune vyřazené do _ke_smazani, zbytek rozliší hvězdičky a klíčová slova v XMP.</p></section>
     ${p && !p.enough ? `<div class="note bad">${ICON.warn}<span>Na disku není dost místa: potřeba ${size(p.needed)}, volno ${size(p.free)}.</span></div>` : ""}
     <button class="btn primary big" data-act="run-import" ${p && p.enough ? "" : "disabled"}>${sorted ? "Spustit import a třídění" : "Spustit import"}</button>
     <span class="small" style="text-align:center">${p ? `${size(p.needed)} · volno ${size(p.free)}` : "Počítám…"}</span>`;
@@ -275,14 +283,14 @@ function renderDone() {
     return `<section class="panel result">
       <div class="head"><h2>${esc(x.name)}</h2><span class="small">${n(x.total)} snímků · ${n(x.series)} sérií</span></div>
       <div class="nums">
-        ${x.used_ai ? `<div class="num"><span class="k good">Výběr · ★★★</span><span class="v">${n(x.good)}</span><span class="h">ve složce akce</span></div>
-        <div class="num"><span class="k warn">Nejisté · ★</span><span class="v">${n(x.unsure)}</span><span class="h">ve složce akce</span></div>`
-        : `<div class="num" style="grid-column:span 2"><span class="k">Bez AI</span><span class="v">${n(x.untouched)}</span><span class="h">zůstalo ve složce akce bez hodnocení</span></div>`}
+        ${x.used_ai ? `<div class="num"><span class="k good">Výběr · ★★★</span><span class="v">${n(x.good)}</span><span class="h">v _vyber</span></div>
+        <div class="num"><span class="k warn">Nejisté · ★</span><span class="v">${n(x.unsure)}</span><span class="h">v _vyber</span></div>`
+        : `<div class="num" style="grid-column:span 2"><span class="k">Bez AI</span><span class="v">${n(x.untouched)}</span><span class="h">v _vyber bez hodnocení</span></div>`}
         <div class="num"><span class="k bad">Ke smazání</span><span class="v">${n(x.delete)}</span><span class="h">${reasons}</span></div>
       </div>
       ${x.foreign ? `<div class="note warn">${ICON.warn}<span>${n(x.foreign)} fotek už mělo vlastní XMP (třeba z Lightroomu) – nechal jsem je bez hodnocení.</span></div>` : ""}
       <div class="row">
-        <button class="btn" data-act="open" data-path="${esc(x.folder)}">Otevřít složku akce</button>
+        <button class="btn" data-act="open" data-path="${esc(x.keep)}">Otevřít _vyber</button>
         ${x.delete ? `<button class="btn" data-act="open" data-path="${esc(x.folder)}\\_ke_smazani">Prohlédnout _ke_smazani</button>
         <button class="btn danger" data-act="trash" data-path="${esc(x.folder)}" data-count="${x.delete}">Přesunout _ke_smazani do Koše…</button>` : ""}
         <button class="btn ghost" data-act="undo" data-path="${esc(x.folder)}">Vrátit třídění</button>
@@ -292,7 +300,7 @@ function renderDone() {
     <div class="main">${cards}</div>
     <aside class="side"><section class="panel"><h2>Další krok v Lightroomu Classic</h2>
       <ol class="howto">
-        <li>Import › <b>Přidat</b> složku akce, <b>bez</b> „Zahrnout podsložky“ (tím vynecháš _ke_smazani i _upraveno)</li>
+        <li>Import › <b>Přidat</b> složku <b>_vyber</b> dané akce</li>
         <li>Filtr podle hvězdiček: ★★★ = výběr, ★ = nejisté</li>
         <li>Klíčová slova Fotosort › … se hodí do chytrých kolekcí</li>
       </ol>
@@ -310,6 +318,7 @@ function cullDialog(folder) {
   S.pendingCull = folder;
   modal(`<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
     <h2 id="dlg-t">Roztřídit složku</h2><p class="mono" style="overflow-wrap:anywhere">${esc(folder)}</p>
+    <div class="note warn">${ICON.warn}<span>Fotky se přesunou do _vyber a _ke_smazani. Jestli už je akce v Lightroomu, bude je tam hledat – nejdřív ji z katalogu odeber.</span></div>
     ${optsHtml()}
     <div class="row"><button class="btn" data-act="close-modal">Zrušit</button><button class="btn primary" data-act="run-cull">Roztřídit</button></div></div>`);
 }

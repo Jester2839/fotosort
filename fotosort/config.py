@@ -11,16 +11,19 @@ VIDEO_EXTS = {".mp4"}
 # Nová akce se navrhne, když mezi dvěma dny s fotkami je aspoň tolik celých dnů bez fotek.
 DEFAULT_GAP_DAYS = 2
 
+# Fotky se při importu kopírují do této podsložky akce; třídění v ní nechá výběr i nejisté
+# (rozlišené XMP) a do Lightroomu se přidává jen ona.
+PHOTO_SUBFOLDER = "_vyber"
 # Složky, které vzniknou v každé nové akci hned při importu.
 EVENT_SUBFOLDERS_ON_IMPORT = ("_upraveno",)
 VIDEO_SUBFOLDER = "video"
 
 # Složka pro vyřazené fotky (vytvoří ji až culling krok). Celá se po kontrole smaže.
 CULL_FOLDERS = {"delete": "_ke_smazani"}
-# Starší verze třídily i do těchto složek; undo je pořád umí uklidit.
+# Prázdné složky, které undo uklidí (_nejiste je ze starší verze).
 LEGACY_CULL_FOLDERS = ("_vyber", "_nejiste")
 
-# Výběr a Nejisté zůstávají ve složce akce a dostanou hodnocení + klíčová slova v XMP,
+# Výběr a Nejisté skončí v PHOTO_SUBFOLDER a dostanou hodnocení + klíčová slova v XMP,
 # která Lightroom Classic načte při importu. Hvězdičky si pak v LR klidně přepiš.
 XMP_RATING = {"good": 3, "unsure": 1}
 KEYWORD_ROOT = "Fotosort"
