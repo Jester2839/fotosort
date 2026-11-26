@@ -1,0 +1,2 @@
+open_clip_torch>=2.24
+mediapipe>=0.10

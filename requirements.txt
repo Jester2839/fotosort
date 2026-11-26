@@ -1,0 +1,4 @@
+exifread>=3.0
+numpy>=2.0
+pillow>=11.0
+rawpy>=0.24
