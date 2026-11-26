@@ -32,57 +32,45 @@ def test_closed_eyes_rejected_and_series_prefers_open_eyes():
 
 
 def test_assign_buckets_relative_and_categories():
-    from fotosort.ai import Score, assign
-
     verdicts = [cull.Verdict(shot(i, i * 600), Analysis()) for i in range(10)]
-    scores = [Score(float(i), "krajina" if i % 2 else "portret") for i in range(10)]
-    assign(verdicts, scores, use_categories=True)
-    dest = {v.shot.stem: v.dest for v in verdicts}
+    scores = [cull.Score(float(i), "zvirata" if i % 2 else "lidi") for i in range(10)]
+    cull.assign(verdicts, scores, use_categories=True)
+    by = {v.shot.stem: v for v in verdicts}
     # skóre 9..6 → výběr (40 %), 1..0 → slabé (20 %), zbytek nejisté
-    assert dest["DSC00009"] == "_vyber/krajina"
-    assert dest["DSC00008"] == "_vyber/portret"
-    assert dest["DSC00006"] == "_vyber/portret"
-    assert dest["DSC00005"] == "_nejiste"
-    assert dest["DSC00001"] == "_ke_smazani/slabe"
-    assert sum(d.startswith("_vyber") for d in dest.values()) == 4
+    assert by["DSC00009"].bucket == "good" and by["DSC00009"].category == "zvirata"
+    assert by["DSC00006"].bucket == "good" and not by["DSC00006"].dest  # výběr zůstává na místě
+    assert by["DSC00005"].bucket == "unsure"
+    assert by["DSC00001"].dest == "_ke_smazani/slabe"
+    assert sum(v.bucket == "good" for v in verdicts) == 4
+    assert cull.keywords_for(by["DSC00009"]) == [("Fotosort", "Výběr"), ("Fotosort", "Obsah", "Zvířata")]
+
+
+def test_assign_strictness():
+    def run(level):
+        vs = [cull.Verdict(shot(i, i * 600), Analysis()) for i in range(10)]
+        cull.assign(vs, [cull.Score(float(i)) for i in range(10)], use_categories=False, strictness=level)
+        return sum(v.bucket == "good" for v in vs), sum(v.reason == "slabe" for v in vs)
+
+    assert run(1) == (4, 0)  # mírná: AI nic nevyhazuje
+    assert run(2) == (4, 2)
+    assert run(3) == (3, 3)
 
 
 def test_assign_small_set_never_rejects():
-    from fotosort.ai import Score, assign
-
     verdicts = [cull.Verdict(shot(i, i * 600), Analysis()) for i in range(5)]
-    assign(verdicts, [Score(5.0 + i) for i in range(5)], use_categories=False)
+    cull.assign(verdicts, [cull.Score(5.0 + i) for i in range(5)], use_categories=False)
     assert not any(v.reason for v in verdicts)
-    assert [v.dest for v in verdicts].count("_vyber") == 2
-
-
-def test_apply_to_vyber_and_undo_cleans_up(tmp_path):
-    from fotosort.ai import Score, assign
-
-    folder = tmp_path / "akce"
-    folder.mkdir()
-    verdicts = []
-    for i in range(3):
-        f = folder / f"DSC{i:05d}.JPG"
-        f.write_bytes(b"x")
-        verdicts.append(cull.Verdict(Shot(f.stem, [f], T0), Analysis()))
-    assign(verdicts, [Score(5.0, "krajina"), Score(6.0, "noc"), Score(7.0, "noc")], use_categories=True)
-    assert cull.apply(folder, verdicts) == 3
-    assert (folder / "_vyber" / "noc" / "DSC00002.JPG").exists()
-    assert cull.undo(folder) == 3
-    assert sorted(p.name for p in folder.iterdir()) == ["DSC00000.JPG", "DSC00001.JPG", "DSC00002.JPG"]
+    assert [v.bucket for v in verdicts].count("good") == 2
 
 
 def test_assign_absolute_floors():
-    from fotosort.ai import Score, assign
-
     good = [cull.Verdict(shot(i, i * 600), Analysis()) for i in range(10)]
-    assign(good, [Score(5.0 + i / 10) for i in range(10)], use_categories=False)
+    cull.assign(good, [cull.Score(5.0 + i / 10) for i in range(10)], use_categories=False)
     assert not any(v.reason for v in good)  # samé dobré fotky: nic do „slabé“
 
     weak = [cull.Verdict(shot(i, i * 600), Analysis()) for i in range(10)]
-    assign(weak, [Score(3.0 + i / 10) for i in range(10)], use_categories=False)
-    assert not any(v.dest.startswith("_vyber") for v in weak)  # samé slabé: nic do výběru
+    cull.assign(weak, [cull.Score(3.0 + i / 10) for i in range(10)], use_categories=False)
+    assert not any(v.bucket == "good" for v in weak)  # samé slabé: nic do výběru
 
 
 @pytest.mark.slow

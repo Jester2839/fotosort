@@ -5,11 +5,9 @@ Importuje torch, takže se načítá jen v hlavním procesu a jen když je AI za
 
 from __future__ import annotations
 
-import math
 import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -23,19 +21,13 @@ from torch import nn  # noqa: E402
 
 from . import config as C
 from .analyze import load_preview
+from .cull import Score
 from .media import Shot
 
 # Váhy OpenAI jsou trénované s aktivací QuickGELU; bez "-quickgelu" by embeddingy byly zkreslené.
 MODEL_NAME = "ViT-L-14-quickgelu"
 CLIP_EDGE = 448  # náhled pro CLIP; model si ho stejně zmenší na 224
 BATCH = 16
-
-
-@dataclass
-class Score:
-    aesthetic: float | None
-    category: str = ""
-    category_prob: float = 0.0
 
 
 class AestheticMLP(nn.Module):
@@ -126,33 +118,3 @@ def score_all(shots: list[Shot], scorer: Scorer,
             if progress:
                 progress(min(start + BATCH, len(shots)), len(shots), chunk[-1].stem)
     return results
-
-
-def assign(verdicts: list, scores: list[Score], use_categories: bool) -> None:
-    """Rozdělí technicky OK fotky podle pořadí skóre v rámci focení (relativně, ne absolutně)."""
-    scored = []
-    prob = {id(v): s.category_prob for v, s in zip(verdicts, scores)}
-    for v, s in zip(verdicts, scores):
-        v.score, v.category = s.aesthetic, s.category
-        if s.aesthetic is None:
-            v.dest, v.note = C.CULL_FOLDERS["unsure"], "AI náhled nejde načíst"
-        else:
-            scored.append(v)
-
-    scored.sort(key=lambda v: v.score, reverse=True)
-    n = len(scored)
-    top = math.ceil(n * C.VYBER_TOP)
-    bottom = math.floor(n * C.SLABE_BOTTOM) if n >= 10 else 0  # u pár fotek nic nevyhazovat
-    for rank, v in enumerate(scored):
-        note = f"skóre {v.score:.2f}"
-        if v.category:
-            note += f" · {v.category} {prob[id(v)]:.0%}"
-        if rank < top and v.score >= C.VYBER_MIN_SCORE:
-            v.dest = C.CULL_FOLDERS["good"]
-            if use_categories and v.category:
-                v.dest += f"/{v.category}"
-            v.note = note
-        elif rank >= n - bottom and v.score < C.SLABE_MAX_SCORE:
-            v.reject("slabe", note)
-        else:
-            v.dest, v.note = C.CULL_FOLDERS["unsure"], note

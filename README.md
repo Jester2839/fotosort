@@ -1,6 +1,6 @@
 # fotosort
 
-Import fotek ze Sony a6700 do knihovny `_Foto` a (později) hrubé třídění.
+Import fotek ze Sony a6700 do knihovny `_Foto` a hrubé třídění pro Lightroom Classic.
 
 ## Instalace
 
@@ -10,7 +10,20 @@ py -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Import z karty
+## Aplikace (okno)
+
+```
+python -m fotosort
+```
+
+Start → Import z karty (rozdělení na akce, názvy, kontrola místa) → průběh → hotovo.
+Druhá cesta: „Roztřídit existující složku“. Na konci jsou tlačítka Otevřít složku,
+Prohlédnout `_ke_smazani`, Přesunout `_ke_smazani` do Koše (s potvrzením) a Vrátit třídění.
+Cesta k Lightroomu pro tlačítko „Otevřít Lightroom“ je v `config.py` (`LIGHTROOM_EXE`).
+
+Potřebuje Python 3.11–3.14 a Microsoft Edge WebView2 (ve Windows 11 je vestavěný).
+
+## Import z karty (terminál)
 
 ```
 python -m fotosort import             # najde kartu sama, ptá se na rozdělení a názvy
@@ -49,14 +62,29 @@ Prochází jen fotky přímo ve složce akce (ne `_upraveno` apod.).
 - `expozice` – jen samotné JPG s extrémně přepálenou/černou plochou,
 - `chyba` – soubor nejde načíst.
 
-**2. AI hodnocení** zbytku (CLIP + LAION aesthetic), relativně v rámci focení:
-- horních 40 % → `_vyber\` (s `--kategorie` → `_vyber\detail\`, `landscape_hory`, `lidi`, `street_architektura`, `zvirata`, `ostatni`),
+**2. AI hodnocení** zbytku (CLIP + LAION aesthetic), relativně v rámci focení.
+Výběr a nejisté **zůstávají ve složce akce** a dostanou XMP, které Lightroom Classic načte při importu:
+- horních 40 % → ★★★, klíčové slovo `Fotosort|Výběr`,
 - spodních 20 % → `_ke_smazani\slabe\` (jen když je fotek aspoň 10),
-- zbytek → `_nejiste\`.
+- zbytek → ★, klíčové slovo `Fotosort|Nejisté`,
+- s `--kategorie` navíc `Fotosort|Obsah|Lidi` / `Krajina` / `Zvířata` / `Detail` / `Město` / `Ostatní`.
 
-`--bez-ai` udělá jen technickou kontrolu bez očí. RAW+JPG se přesouvají spolu, nic se nemaže,
-`--undo` vrátí vše zpět (log je v `_ke_smazani\_fotosort_log.csv`).
+`--prisnost 1|2|3` mění podíly (1 = AI nic nevyhazuje, 3 = horních 30 % / spodních 30 %).
+
+U RAW (i párů RAW+JPG) vznikne sidecar `<název>.xmp`, samotné JPG dostane XMP přímo do souboru.
+Cizí XMP (např. už upravené v Lightroomu) se nikdy nepřepíše. `--bez-ai` udělá jen technickou
+kontrolu bez očí a bez XMP. RAW+JPG se přesouvají spolu, nic se nemaže,
+`--undo` vrátí přesuny i odstraní naše XMP (log je v `_ke_smazani\_fotosort_log.csv`).
 Prahy, procenta a kategorie jsou v `config.py`.
+
+### Lightroom Classic
+
+1. Import › **Přidat** složku akce, **bez** „Zahrnout podsložky“ – tím vynecháš `_ke_smazani` i `_upraveno`.
+2. Filtruj podle hvězdiček (★★★ výběr, ★ nejisté) nebo klíčových slov `Fotosort › …`.
+3. `_ke_smazani` po prohlédnutí smaž celou (v aplikaci jde do Koše).
+
+Importuj až **po** třídění – XMP se čte při importu. Vlaječky a barevné štítky Fotosort nepoužívá,
+zůstávají ti na vlastní výběr.
 
 ### Instalace AI (jednou)
 

@@ -1,24 +1,37 @@
-"""Technické třídění složky: neostré, série a přepálené JPG do _ke_smazani/<důvod>/.
+"""Třídění složky akce.
 
-Nic se nemaže. Každý přesun se zapíše do logu, takže jde celé vrátit (undo).
+Vyřazené (neostré, série, zavřené oči, přepálené JPG, slabé AI skóre) se přesunou do
+_ke_smazani/<důvod>/. Výběr a nejisté zůstanou na místě a dostanou XMP pro Lightroom.
+Nic se nemaže. Každý přesun i zápis XMP jde do logu, takže jde celé vrátit (undo).
 """
 
 from __future__ import annotations
 
 import csv
+import math
 import os
 import statistics
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from . import config as C
+from . import xmp
 from .analyze import Analysis, analyze, hamming
 from .media import Shot, collect_photos
 
 REASONS = {"neostre": "neostré", "zavrene_oci": "zavřené oči", "serie": "ze série",
            "expozice": "přepálené/podexponované JPG", "slabe": "nízké AI skóre", "chyba": "nejde načíst"}
+
+
+@dataclass
+class Score:
+    """Výsledek AI pro jeden snímek (počítá ai.Scorer; tady, aby třídění nepotřebovalo torch)."""
+
+    aesthetic: float | None
+    category: str = ""
+    category_prob: float = 0.0
 
 
 @dataclass
@@ -28,6 +41,7 @@ class Verdict:
     reason: str = ""  # důvod vyřazení; prázdné = nevyřazeno
     note: str = ""
     dest: str = ""  # cílová podsložka relativně ke složce akce; prázdné = nechat na místě
+    bucket: str = ""  # "good" | "unsure" (zůstává na místě, dostane XMP); prázdné = bez AI
     score: float | None = None  # AI estetické skóre
     category: str = ""
 
@@ -53,13 +67,18 @@ def analyze_all(shots: list[Shot], progress: Callable[[int, int, str], None] | N
                 workers: int | None = None, face_model: str | None = None) -> list[Analysis]:
     results: list[Analysis] = [Analysis()] * len(shots)
     workers = workers or max(1, (os.cpu_count() or 2) - 1)
-    with ProcessPoolExecutor(max_workers=workers, initializer=_quiet_worker) as pool:
+    pool = ProcessPoolExecutor(max_workers=workers, initializer=_quiet_worker)
+    try:
         futures = {pool.submit(analyze, s.files, face_model): i for i, s in enumerate(shots)}
         for done, fut in enumerate(as_completed(futures), 1):
             i = futures[fut]
             results[i] = fut.result()
-            if progress:
+            if progress:  # progress smí vyhodit výjimku (zrušení z GUI)
                 progress(done, len(shots), shots[i].stem)
+    except BaseException:
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown()
     return results
 
 
@@ -134,17 +153,71 @@ def decide(shots: list[Shot], analyses: list[Analysis]) -> tuple[list[Verdict], 
     return verdicts, len(series)
 
 
-def apply(folder: Path, verdicts: list[Verdict]) -> int:
-    """Přesune snímky do jejich cílových složek (RAW+JPG spolu) a zapíše log pro undo."""
+def assign(verdicts: list[Verdict], scores: list[Score], use_categories: bool,
+           strictness: int = C.DEFAULT_STRICTNESS) -> None:
+    """Rozdělí technicky OK fotky podle pořadí AI skóre v rámci focení (relativně, ne absolutně).
+
+    `scores` jsou ve stejném pořadí jako verdikty.
+    """
+    top_share, bottom_share = C.STRICTNESS[strictness]
+    scored = []
+    for v, s in zip(verdicts, scores):
+        v.score, v.category = s.aesthetic, (s.category if use_categories else "")
+        if s.aesthetic is None:
+            v.bucket, v.note = "unsure", "AI náhled nejde načíst"
+        else:
+            scored.append((v, s))
+
+    scored.sort(key=lambda vs: vs[0].score, reverse=True)
+    n = len(scored)
+    top = math.ceil(n * top_share)
+    bottom = math.floor(n * bottom_share) if n >= 10 else 0  # u pár fotek nic nevyhazovat
+    for rank, (v, s) in enumerate(scored):
+        note = f"skóre {v.score:.2f}"
+        if v.category:
+            note += f" · {v.category} {s.category_prob:.0%}"
+        if rank < top and v.score >= C.VYBER_MIN_SCORE:
+            v.bucket, v.note = "good", note
+        elif rank >= n - bottom and v.score < C.SLABE_MAX_SCORE:
+            v.reject("slabe", note)
+        else:
+            v.bucket, v.note = "unsure", note
+
+
+def keywords_for(v: Verdict) -> list[xmp.Keyword]:
+    root = C.KEYWORD_ROOT
+    kws: list[xmp.Keyword] = [(root, C.BUCKET_KEYWORD[v.bucket])]
+    if v.category:
+        kws.append((root, "Obsah", C.CATEGORY_KEYWORD.get(v.category, v.category)))
+    return kws
+
+
+@dataclass
+class ApplyReport:
+    moved: int = 0  # přesunuté soubory (do _ke_smazani)
+    tagged: int = 0  # snímky s nově zapsaným XMP
+    foreign_xmp: list[str] = field(default_factory=list)  # už měly cizí XMP (nechány být)
+
+
+def apply(folder: Path, verdicts: list[Verdict]) -> ApplyReport:
+    """Přesune vyřazené (RAW+JPG spolu), zapíše XMP výběru/nejistým a vše zaloguje pro undo."""
     log_path = folder / C.CULL_FOLDERS["delete"] / C.CULL_LOG
     log_path.parent.mkdir(exist_ok=True)
     new_log = not log_path.exists()
-    moved = 0
+    report = ApplyReport()
     with log_path.open("a", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         if new_log:
             writer.writerow(["z", "do", "duvod", "poznamka"])
         for v in verdicts:
+            if v.bucket and not v.dest:
+                written = xmp.write(v.shot.files, C.XMP_RATING[v.bucket], keywords_for(v))
+                if written is None:
+                    report.foreign_xmp.append(v.shot.stem)
+                    continue
+                writer.writerow([written.name, "xmp", v.bucket, v.note])
+                report.tagged += 1
+                continue
             if not v.dest:
                 continue
             target = folder / v.dest
@@ -155,12 +228,12 @@ def apply(folder: Path, verdicts: list[Verdict]) -> int:
                     continue
                 os.replace(f, dst)
                 writer.writerow([f.name, dst.relative_to(folder).as_posix(), v.reason or v.dest, v.note])
-                moved += 1
-    return moved
+                report.moved += 1
+    return report
 
 
 def undo(folder: Path) -> int:
-    """Vrátí všechny přesuny z logu zpět do složky akce."""
+    """Vrátí všechny přesuny z logu zpět do složky akce a odstraní naše XMP."""
     log_path = folder / C.CULL_FOLDERS["delete"] / C.CULL_LOG
     if not log_path.exists():
         log_path = folder / ".fotosort_log.csv"  # starší verze ho dávala do složky akce
@@ -169,14 +242,21 @@ def undo(folder: Path) -> int:
     restored = 0
     with log_path.open(encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
+            if row["do"] == "xmp":
+                restored += xmp.remove(folder / row["z"])
+                continue
             src, dst = folder / row["do"], folder / row["z"]
             if src.exists() and not dst.exists():
                 os.replace(src, dst)
                 restored += 1
     log_path.unlink()
-    for top in C.CULL_FOLDERS.values():
+    for top in (*C.CULL_FOLDERS.values(), *C.LEGACY_CULL_FOLDERS):
         base = folder / top
         for sub in sorted(base.glob("**/"), reverse=True) if base.exists() else []:
             if not any(sub.iterdir()):
                 sub.rmdir()
     return restored
+
+
+def is_culled(folder: Path) -> bool:
+    return (folder / C.CULL_FOLDERS["delete"] / C.CULL_LOG).exists()

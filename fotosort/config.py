@@ -15,8 +15,26 @@ DEFAULT_GAP_DAYS = 2
 EVENT_SUBFOLDERS_ON_IMPORT = ("_upraveno",)
 VIDEO_SUBFOLDER = "video"
 
-# Složky pro třídění (vytvoří je až culling krok).
-CULL_FOLDERS = {"good": "_vyber", "unsure": "_nejiste", "delete": "_ke_smazani"}
+# Složka pro vyřazené fotky (vytvoří ji až culling krok). Celá se po kontrole smaže.
+CULL_FOLDERS = {"delete": "_ke_smazani"}
+# Starší verze třídily i do těchto složek; undo je pořád umí uklidit.
+LEGACY_CULL_FOLDERS = ("_vyber", "_nejiste")
+
+# Výběr a Nejisté zůstávají ve složce akce a dostanou hodnocení + klíčová slova v XMP,
+# která Lightroom Classic načte při importu. Hvězdičky si pak v LR klidně přepiš.
+XMP_RATING = {"good": 3, "unsure": 1}
+KEYWORD_ROOT = "Fotosort"
+BUCKET_KEYWORD = {"good": "Výběr", "unsure": "Nejisté"}
+CATEGORY_KEYWORD = {"detail": "Detail", "landscape_hory": "Krajina", "lidi": "Lidi",
+                    "street_architektura": "Město", "zvirata": "Zvířata", "ostatni": "Ostatní"}
+
+# Přísnost (GUI posuvník, CLI --prisnost): (horní podíl do výběru, spodní podíl do „slabé“).
+# U mírné jde do _ke_smazani jen technicky špatné, všechno ostatní zůstane.
+STRICTNESS = {1: (0.40, 0.0), 2: (0.40, 0.20), 3: (0.30, 0.30)}
+DEFAULT_STRICTNESS = 2
+
+# Lightroom Classic pro tlačítko „Otevřít Lightroom“ v GUI.
+LIGHTROOM_EXE = Path(r"C:\Program Files\Adobe\Adobe Lightroom Classic\Lightroom.exe")
 
 # --- Technické třídění ---
 # Neostrá = ostrost pod BLUR_ABS, nebo hluboko pod mediánem focení (BLUR_RELATIVE × medián).
@@ -43,15 +61,14 @@ FACE_MIN_WIDTH = 0.06
 EYES_CLOSED = 0.5
 
 # --- AI hodnocení (CLIP + LAION aesthetic) ---
-# Z technicky v pořádku fotek: horních X % do _vyber, spodních Y % do _ke_smazani/slabe, zbytek _nejiste.
-VYBER_TOP = 0.40
-SLABE_BOTTOM = 0.20
+# Z technicky v pořádku fotek: horních X % = výběr (★★★), spodních Y % do _ke_smazani/slabe,
+# zbytek nejisté (★). Podíly podle přísnosti viz STRICTNESS výše.
 # Absolutní pojistky (LAION skóre, typicky 3–7): do výběru jen od VYBER_MIN_SCORE,
 # do „slabé“ jen pod SLABE_MAX_SCORE. Díky tomu focení samých dobrých fotek nic nevyhodí
 # a focení samých slabých nic nevynese do výběru. Odladěno zatím jen na ~50 fotkách.
 VYBER_MIN_SCORE = 4.5
 SLABE_MAX_SCORE = 4.5
-# Kategorie pro _vyber/<kategorie> (přepínač --kategorie). Klíč = název složky, hodnota = popisy pro CLIP.
+# Kategorie obsahu → klíčové slovo Fotosort|Obsah|… (viz CATEGORY_KEYWORD). Hodnota = popisy pro CLIP.
 CATEGORIES = {
     "detail": ["a close-up detail photo of an object", "a macro photo of a plant or flower",
                "a close-up photo of texture or pattern"],
@@ -65,5 +82,5 @@ CATEGORIES = {
     "zvirata": ["a photo of an animal", "a photo of a bird", "a photo of sheep, cows or horses",
                 "a flock of sheep on a hillside", "a photo of a dog or a cat"],
 }
-# Když si CLIP není jistý ani jednou kategorií, fotka jde do _vyber/ostatni.
+# Když si CLIP není jistý ani jednou kategorií, fotka dostane „Ostatní“.
 CATEGORY_MIN_PROB = 0.30

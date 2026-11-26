@@ -1,4 +1,4 @@
-"""Příkazová řádka. GUI později zavolá stejné funkce z media/grouping/importer."""
+"""Příkazová řádka. GUI (gui/app.py) volá stejné funkce z importer a pipeline."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import cards, cull, models
+from . import cards, cull, pipeline
 from . import config as C
 from .config import DEFAULT_GAP_DAYS, LIBRARY_ROOT
 from .grouping import Day, shooting_days, split_by_cuts, suggest_cuts
@@ -143,102 +143,70 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
-def _prepare_eyes() -> str | None:
-    try:
-        import mediapipe  # noqa: F401
-    except ImportError:
-        print("  (MediaPipe není nainstalované – zavřené oči přeskočím)")
-        return None
-    try:
-        return str(models.ensure(models.FACE_LANDMARKER))
-    except Exception as exc:
-        print(f"  ! Model pro oči se nepodařilo stáhnout ({exc}) – zavřené oči přeskočím")
-        return None
+class CliReporter:
+    def __init__(self) -> None:
+        self.stage = ""
 
+    def log(self, msg: str, level: str = "info") -> None:
+        if self.stage:
+            print()
+            self.stage = ""
+        print(f"  {'! ' if level == 'warn' else ''}{msg}")
 
-def _prepare_scorer(categories: bool):
-    try:
-        from . import ai
-    except ImportError as exc:
-        print(f"  ! AI hodnocení vyžaduje torch a open_clip_torch ({exc}). Viz README. Pokračuju bez AI.")
-        return None, None
-    try:
-        weights = models.ensure(models.AESTHETIC_MLP)
-        print("Načítám AI model (poprvé se stahuje asi 900 MB)…")
-        scorer = ai.Scorer(weights, C.CATEGORIES if categories else None)
-    except Exception as exc:
-        print(f"  ! AI model se nepodařilo načíst ({type(exc).__name__}: {exc}). Pokračuju bez AI.")
-        return None, None
-    if scorer.device == "cuda":
-        import torch
-        print(f"  GPU: {torch.cuda.get_device_name(0)}")
-    else:
-        print("  ! Běžím na CPU (torch nevidí NVIDIA GPU) – bude to pomalejší. Viz README, instalace torch s CUDA.")
-    return ai, scorer
+    def progress(self, stage: str, done: int, total: int, name: str) -> None:
+        if stage != self.stage:
+            print({"analyze": "Technická kontrola (ostrost, série, oči):", "ai": "\nAI hodnocení:"}[stage])
+            self.stage = stage
+        count_bar(done, total, name)
 
 
 def _print_group(label: str, dest: str, group: list) -> None:
-    print(f"  {label:<30} {len(group):>4}  → {dest}/")
+    print(f"  {label:<30} {len(group):>4}  → {dest}")
     for v in group[:5]:
         print(f"      {v.shot.stem}: {v.note}")
     if len(group) > 5:
         print(f"      … a dalších {len(group) - 5}")
 
 
-def run_cull(folder: Path, dry_run: bool, ask: bool, use_ai: bool = True, categories: bool = False) -> int:
+def run_cull(folder: Path, dry_run: bool, ask: bool, use_ai: bool = True, categories: bool = False,
+             strictness: int = C.DEFAULT_STRICTNESS) -> int:
     print(f"\nTřídím: {folder}")
-    shots = cull.find_shots(folder)
-    if not shots:
+    plan = pipeline.plan_cull(folder, CliReporter(), use_ai, categories, strictness)
+    verdicts = plan.verdicts
+    if not verdicts:
         print("Ve složce nejsou žádné fotky (podsložky se neprochází).")
         return 0
 
-    face_model = _prepare_eyes() if use_ai else None
-    print("Technická kontrola (ostrost, série, oči):")
-    analyses = cull.analyze_all(shots, count_bar, face_model=face_model)
-    print()
-    verdicts, series_count = cull.decide(shots, analyses)
-    eye_errors = [a.eyes_error for a in analyses if a.eyes_error]
-    if face_model and eye_errors:
-        print(f"\n  ! Detekce očí selhala u {len(eye_errors)} fotek, např.: {eye_errors[0]}")
-
-    ai_mod, scorer = _prepare_scorer(categories) if use_ai else (None, None)
-    if scorer:
-        survivors = [v for v in verdicts if not v.reason]
-        print("\nAI hodnocení:")
-        scores = ai_mod.score_all([v.shot for v in survivors], scorer, count_bar)
-        print()
-        ai_mod.assign(survivors, scores, categories)
-
-    print(f"\n\nAnalyzováno {len(shots)} snímků, nalezeno {series_count} sérií.")
+    print(f"\n\nAnalyzováno {len(verdicts)} snímků, nalezeno {plan.series_count} sérií.")
     trash = C.CULL_FOLDERS["delete"]
     for reason, label in cull.REASONS.items():
         group = [v for v in verdicts if v.reason == reason]
         if group:
-            _print_group(label, f"{trash}/{reason}", group)
-    if scorer:
-        unsure = [v for v in verdicts if v.dest == C.CULL_FOLDERS["unsure"]]
-        good = [v for v in verdicts if v.dest.startswith(C.CULL_FOLDERS["good"])]
-        if categories:
-            for dest in sorted({v.dest for v in good}):
-                _print_group("výběr", dest, [v for v in good if v.dest == dest])
-        elif good:
-            _print_group("výběr", C.CULL_FOLDERS["good"], good)
-        if unsure:
-            _print_group("nejisté", C.CULL_FOLDERS["unsure"], unsure)
+            _print_group(label, f"{trash}/{reason}/", group)
+    if plan.used_ai:
+        for bucket, label in (("good", "výběr"), ("unsure", "nejisté")):
+            group = [v for v in verdicts if v.bucket == bucket and not v.dest]
+            if group:
+                stars = "★" * C.XMP_RATING[bucket]
+                _print_group(label, f"zůstává, XMP {stars} {C.KEYWORD_ROOT}|{C.BUCKET_KEYWORD[bucket]}", group)
     else:
         print(f"  {'zůstává na místě':<30} {sum(1 for v in verdicts if not v.dest):>4}")
 
-    if not any(v.dest for v in verdicts):
+    if not any(v.dest or v.bucket for v in verdicts):
         print("Nic k přesunu.")
         return 0
     if dry_run:
-        print("\n(dry run – nic se nepřesunulo)")
+        print("\n(dry run – nic se nepřesunulo ani nezapsalo)")
         return 0
-    if ask and input("\nPřesunout? [A/n] ").strip().lower() not in ("", "a", "ano", "y"):
+    if ask and input("\nPřesunout vyřazené a zapsat XMP? [A/n] ").strip().lower() not in ("", "a", "ano", "y"):
         print("Zrušeno.")
         return 0
-    moved = cull.apply(folder, verdicts)
-    print(f"✓ Přesunuto {moved} souborů. Vrátit jde přes: python -m fotosort cull \"{folder}\" --undo")
+    rep = pipeline.apply_plan(plan)
+    print(f"✓ Přesunuto {rep.moved} souborů do {trash}, XMP zapsáno u {rep.tagged} snímků.")
+    if rep.foreign_xmp:
+        print(f"  ! {len(rep.foreign_xmp)} snímků už mělo vlastní XMP, nechal jsem je být "
+              f"(např. {rep.foreign_xmp[0]}).")
+    print(f"  Vrátit jde přes: python -m fotosort cull \"{folder}\" --undo")
     return 0
 
 
@@ -248,14 +216,20 @@ def cmd_cull(args: argparse.Namespace) -> int:
         print(f"Složka neexistuje: {folder}")
         return 1
     if args.undo:
-        print(f"Vráceno {cull.undo(folder)} souborů zpět do {folder}.")
+        print(f"Vráceno {cull.undo(folder)} souborů/XMP zpět v {folder}.")
         return 0
-    return run_cull(folder, args.dry_run, ask=not args.yes, use_ai=not args.bez_ai, categories=args.kategorie)
+    return run_cull(folder, args.dry_run, ask=not args.yes, use_ai=not args.bez_ai,
+                    categories=args.kategorie, strictness=args.prisnost)
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    from .gui.app import run
+    return run(args.root)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fotosort")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd")
 
     p = sub.add_parser("import", help="zkopírovat nové fotky z karty do knihovny")
     p.add_argument("--card", help="cesta ke kartě (jinak se hledá disk se složkou DCIM)")
@@ -266,14 +240,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-y", "--yes", action="store_true", help="bez dotazů, přijmout návrh")
     p.set_defaults(func=cmd_import)
 
-    c = sub.add_parser("cull", help="roztřídit akci do _vyber / _nejiste / _ke_smazani")
+    c = sub.add_parser("cull", help="roztřídit akci: vyřazené do _ke_smazani, zbytek ohodnotit v XMP")
     c.add_argument("folder", help="složka akce, např. ...\\_Foto\\2026\\260703-18_Norsko")
     c.add_argument("--dry-run", action="store_true", help="jen ukázat, co by se přesunulo")
     c.add_argument("--undo", action="store_true", help="vrátit poslední třídění zpět")
     c.add_argument("--bez-ai", action="store_true", help="jen technická kontrola (bez očí a AI skóre)")
-    c.add_argument("--kategorie", action="store_true", help="rozdělit _vyber do podsložek podle obsahu")
+    c.add_argument("--kategorie", action="store_true", help="přidat klíčové slovo podle obsahu (Fotosort|Obsah|…)")
+    c.add_argument("--prisnost", type=int, choices=sorted(C.STRICTNESS), default=C.DEFAULT_STRICTNESS,
+                   help="1 = AI nic nevyhazuje, 2 = vyvážená, 3 = přísná")
     c.add_argument("-y", "--yes", action="store_true", help="bez dotazu")
     c.set_defaults(func=cmd_cull)
 
+    g = sub.add_parser("gui", help="spustit okno aplikace (výchozí bez příkazu)")
+    g.add_argument("--root", type=Path, default=LIBRARY_ROOT, help="kořen knihovny fotek")
+    g.set_defaults(func=cmd_gui)
+
     args = parser.parse_args(argv)
+    if args.cmd is None:
+        args = parser.parse_args(["gui", *(argv or [])])
     return args.func(args)
